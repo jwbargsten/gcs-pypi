@@ -39,7 +39,8 @@ pip / uv ──HTTP──▶ 127.0.0.1:<random>/simple/  (gcs-pypi)
 |---|---|
 | Wrap a command (recommended) | `gcs-pypi --bucket gs://b/prefix -- <cmd...>` sets `PIP_INDEX_URL` and `UV_DEFAULT_INDEX` for `<cmd>`, then exits with its exit code |
 | Long-running | `gcs-pypi --bucket gs://b/prefix --addr 127.0.0.1:8765` prints the env lines and serves until Ctrl-C |
-| Background | `eval "$(gcs-pypi --bucket gs://b/prefix --daemon)"` returns once the server is ready and sets the env vars plus `GCS_PYPI_PID` in your shell; stop it with `kill $GCS_PYPI_PID` |
+| Background | `eval "$(gcs-pypi --bucket gs://b/prefix --daemon)"` returns once the server is ready and exports the env vars plus `GCS_PYPI_PID` in your shell; stop it with `kill $GCS_PYPI_PID` |
+| Point the shell at a running server | `eval "$(gcs-pypi env)"` exports `PIP_INDEX_URL` and `UV_DEFAULT_INDEX` for `127.0.0.1:8765` (the systemd service); `--addr` for another address |
 | systemd service | see [Running as a systemd service](#running-as-a-systemd-service) |
 
 | Flag / env | Default | |
@@ -95,7 +96,13 @@ sudo systemctl enable --now gcs-pypi
 journalctl -u gcs-pypi -f
 ```
 
-Then point pip and uv at it, e.g. in `/etc/pip.conf` and `/etc/uv/uv.toml`:
+Then point pip and uv at it, either per shell, e.g. in `~/.bashrc`:
+
+```bash
+eval "$(gcs-pypi env)"
+```
+
+or for everyone, in `/etc/pip.conf` and `/etc/uv/uv.toml`:
 
 ```ini
 [global]

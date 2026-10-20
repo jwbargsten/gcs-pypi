@@ -11,11 +11,12 @@ mod auth;
 mod daemon;
 mod index;
 mod server;
+mod shellenv;
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -31,12 +32,16 @@ use crate::{
     after_help = "With a command after `--`, the server starts on a free port, PIP_INDEX_URL and \
                   UV_DEFAULT_INDEX are set for the command, and the server stops when it exits.\n\
                   Without a command, the server runs until interrupted, or in the background with \
-                  --daemon."
+                  --daemon.",
+    subcommand_negates_reqs = true
 )]
 struct Args {
+    #[command(subcommand)]
+    cmd: Option<Cmd>,
+
     /// Bucket and optional prefix, e.g. gs://my-pypi or gs://my-pypi/packages
-    #[arg(long, env = "GCS_PYPI_BUCKET")]
-    bucket: String,
+    #[arg(long, env = "GCS_PYPI_BUCKET", required = true)]
+    bucket: Option<String>,
 
     /// Address to listen on (port 0 picks a free port)
     #[arg(long, env = "GCS_PYPI_ADDR", default_value = "127.0.0.1:0")]
@@ -67,8 +72,8 @@ struct Args {
     #[arg(long, short)]
     verbose: bool,
 
-    /// Serve in the background: return once the server is ready, printing its env lines and
-    /// GCS_PYPI_PID (stop it with `kill $GCS_PYPI_PID`)
+    /// Serve in the background: return once the server is ready, printing a shell snippet for
+    /// `eval` that also sets GCS_PYPI_PID (stop it with `kill $GCS_PYPI_PID`)
     #[arg(long, conflicts_with = "command")]
     daemon: bool,
 
@@ -79,6 +84,17 @@ struct Args {
     /// Command to run with the index configured
     #[arg(last = true)]
     command: Vec<String>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Cmd {
+    /// Print a shell snippet that points pip and uv at an already running server, e.g. the
+    /// systemd service: eval "$(gcs-pypi env)"
+    Env {
+        /// Address the server listens on
+        #[arg(long, env = "GCS_PYPI_ADDR", default_value = "127.0.0.1:8765")]
+        addr: SocketAddr,
+    },
 }
 
 fn parse_bucket(spec: &str) -> Result<(String, String)> {
@@ -98,7 +114,15 @@ fn parse_bucket(spec: &str) -> Result<(String, String)> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let (bucket, prefix) = parse_bucket(&args.bucket)?;
+    if let Some(Cmd::Env { addr }) = args.cmd {
+        if addr.port() == 0 {
+            bail!("env: --addr needs the server's port, not 0");
+        }
+        print!("{}", shellenv::snippet(&shellenv::index_url(addr), None));
+        return Ok(());
+    }
+    // Required by clap unless a subcommand is given.
+    let (bucket, prefix) = parse_bucket(args.bucket.as_deref().context("--bucket is required")?)?;
     if args.daemon && !daemon::is_child() {
         let log_file = args
             .log_file
@@ -133,7 +157,7 @@ async fn main() -> Result<()> {
 
     let listener = tokio::net::TcpListener::bind(args.addr).await?;
     let addr = listener.local_addr()?;
-    let url = format!("http://{addr}/simple/");
+    let url = shellenv::index_url(addr);
     eprintln!(
         "gcs-pypi: serving gs://{}/{} ({n} projects) at {url}",
         state.bucket, state.prefix
@@ -142,8 +166,11 @@ async fn main() -> Result<()> {
     let server = tokio::spawn(async move { axum::serve(listener, app).await });
 
     if args.command.is_empty() {
-        println!("PIP_INDEX_URL={url}");
-        println!("UV_DEFAULT_INDEX={url}");
+        if daemon::is_child() {
+            println!("{url}");
+        } else {
+            print!("{}", shellenv::snippet(&url, None));
+        }
         tokio::select! {
             r = server => r??,
             _ = tokio::signal::ctrl_c() => {}
@@ -200,6 +227,19 @@ mod tests {
     fn auth_flag(#[case] extra: &[&str], #[case] expected: AuthMode) {
         let argv = [&["gcs-pypi", "--bucket", "gs://b"], extra].concat();
         assert_eq!(Args::try_parse_from(argv).unwrap().auth, expected);
+    }
+
+    #[rstest]
+    #[case(&["gcs-pypi", "env"], "127.0.0.1:8765")]
+    #[case(&["gcs-pypi", "env", "--addr", "[::1]:9000"], "[::1]:9000")]
+    fn env_needs_no_bucket(#[case] argv: &[&str], #[case] expected: SocketAddr) {
+        let args = Args::try_parse_from(argv).unwrap();
+        assert!(matches!(args.cmd, Some(Cmd::Env { addr }) if addr == expected));
+    }
+
+    #[test]
+    fn serving_needs_bucket() {
+        assert!(Args::try_parse_from(["gcs-pypi"]).is_err());
     }
 
     #[test]

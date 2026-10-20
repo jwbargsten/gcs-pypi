@@ -10,6 +10,8 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 
+use crate::shellenv;
+
 /// Set for the detached child, so it serves in the foreground instead of spawning again.
 const CHILD_ENV: &str = "GCS_PYPI_DAEMON_CHILD";
 
@@ -17,8 +19,8 @@ pub fn is_child() -> bool {
     std::env::var_os(CHILD_ENV).is_some()
 }
 
-/// Start the server in the background and print its env lines (plus `GCS_PYPI_PID`) once it is
-/// ready. If it fails to start, its log output is copied to stderr and an error is returned.
+/// Start the server in the background and print the shell snippet (plus `GCS_PYPI_PID`) once it
+/// is ready. If it fails to start, its log output is copied to stderr and an error is returned.
 pub fn spawn(log_file: &Path) -> Result<()> {
     let log = OpenOptions::new()
         .create(true)
@@ -45,13 +47,9 @@ pub fn spawn(log_file: &Path) -> Result<()> {
     }
     let mut child = cmd.spawn().context("starting background server")?;
 
-    // The child prints PIP_INDEX_URL and UV_DEFAULT_INDEX once it serves; EOF means it gave up.
+    // The child prints its index URL once it serves; EOF means it gave up.
     let stdout = child.stdout.take().context("background server has no stdout")?;
-    let ready: Vec<String> = BufReader::new(stdout)
-        .lines()
-        .take(2)
-        .collect::<io::Result<_>>()?;
-    if ready.len() < 2 {
+    let Some(url) = BufReader::new(stdout).lines().next().transpose()? else {
         let status = child.wait()?;
         let mut log = File::open(log_file)?;
         log.seek(SeekFrom::Start(log_start))?;
@@ -60,12 +58,9 @@ pub fn spawn(log_file: &Path) -> Result<()> {
             "background server failed to start ({status}), log: {}",
             log_file.display()
         );
-    }
+    };
 
-    for line in ready {
-        println!("{line}");
-    }
-    println!("GCS_PYPI_PID={}", child.id());
+    print!("{}", shellenv::snippet(&url, Some(child.id())));
     eprintln!(
         "gcs-pypi: running in background (pid {}), log: {}",
         child.id(),
