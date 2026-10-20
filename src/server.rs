@@ -4,19 +4,23 @@ use std::sync::Arc;
 
 use anyhow::anyhow;
 use axum::{
+    Router,
     body::Body,
     extract::{Path, State},
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::{Html, IntoResponse, Redirect, Response},
     routing::get,
-    Router,
 };
-use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
-use crate::index::{normalize, project_of, AppState};
+use crate::index::{AppState, normalize, project_of};
 
 /// Encode everything except RFC 3986 unreserved characters.
-const COMPONENT: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'.').remove(b'_').remove(b'~');
+const COMPONENT: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
@@ -28,7 +32,10 @@ pub fn router(state: Arc<AppState>) -> Router {
 }
 
 fn esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn page(title: &str, links: &str) -> Html<String> {
@@ -79,7 +86,11 @@ async fn project_page(State(st): State<Arc<AppState>>, Path(name): Path<String>)
                 .split('/')
                 .map(|seg| utf8_percent_encode(seg, COMPONENT).to_string())
                 .collect();
-            let frag = d.hash.as_ref().map(|(alg, hex)| format!("#{alg}={hex}")).unwrap_or_default();
+            let frag = d
+                .hash
+                .as_ref()
+                .map(|(alg, hex)| format!("#{alg}={hex}"))
+                .unwrap_or_default();
             let rp = d
                 .requires_python
                 .as_ref()

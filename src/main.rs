@@ -13,7 +13,7 @@ mod server;
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use tokio::sync::Mutex;
 
@@ -54,7 +54,11 @@ struct Args {
     auth: String,
 
     /// GCS API endpoint (override for emulators)
-    #[arg(long, env = "GCS_PYPI_ENDPOINT", default_value = "https://storage.googleapis.com")]
+    #[arg(
+        long,
+        env = "GCS_PYPI_ENDPOINT",
+        default_value = "https://storage.googleapis.com"
+    )]
     endpoint: String,
 
     /// Log each request to stderr
@@ -72,7 +76,11 @@ fn parse_bucket(spec: &str) -> Result<(String, String)> {
     if bucket.is_empty() {
         bail!("invalid --bucket {spec:?}, expected gs://bucket[/prefix]");
     }
-    let prefix = if prefix.is_empty() { String::new() } else { format!("{prefix}/") };
+    let prefix = if prefix.is_empty() {
+        String::new()
+    } else {
+        format!("{prefix}/")
+    };
     Ok((bucket.to_string(), prefix))
 }
 
@@ -89,7 +97,11 @@ async fn main() -> Result<()> {
     };
     let upstream = match args.upstream.as_str() {
         "" | "none" => None,
-        u => Some(if u.ends_with('/') { u.to_string() } else { format!("{u}/") }),
+        u => Some(if u.ends_with('/') {
+            u.to_string()
+        } else {
+            format!("{u}/")
+        }),
     };
 
     let state = Arc::new(AppState {

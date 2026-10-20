@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
@@ -38,7 +38,11 @@ impl Auth {
             .no_proxy()
             .timeout(Duration::from_secs(3))
             .build()?;
-        Ok(Self { mode, metadata_http, cached: Mutex::new(None) })
+        Ok(Self {
+            mode,
+            metadata_http,
+            cached: Mutex::new(None),
+        })
     }
 
     pub async fn token(&self) -> Result<Option<String>> {
@@ -46,34 +50,35 @@ impl Auth {
             return Ok(None);
         }
         let mut cached = self.cached.lock().await;
-        if let Some(t) = cached.as_ref() {
-            if Instant::now() < t.refresh_at {
-                return Ok(Some(t.value.clone()));
-            }
+        if let Some(t) = cached.as_ref()
+            && Instant::now() < t.refresh_at
+        {
+            return Ok(Some(t.value.clone()));
         }
         let (value, lifetime) = match self.mode {
             AuthMode::Metadata => self.from_metadata().await?,
             AuthMode::Gcloud => from_gcloud().await?,
             AuthMode::Auto => match self.from_metadata().await {
                 Ok(t) => t,
-                Err(meta_err) => from_gcloud().await.map_err(|g| {
-                    anyhow!("no credentials: metadata server: {meta_err:#}; gcloud: {g:#}")
-                })?,
+                Err(meta_err) => from_gcloud()
+                    .await
+                    .map_err(|g| anyhow!("no credentials: metadata server: {meta_err:#}; gcloud: {g:#}"))?,
             },
             AuthMode::None => unreachable!(),
         };
         // Refresh a minute before expiry.
         let refresh_at = Instant::now() + lifetime.saturating_sub(Duration::from_secs(60));
-        *cached = Some(CachedToken { value: value.clone(), refresh_at });
+        *cached = Some(CachedToken {
+            value: value.clone(),
+            refresh_at,
+        });
         Ok(Some(value))
     }
 
     async fn from_metadata(&self) -> Result<(String, Duration)> {
-        let host = std::env::var("GCE_METADATA_HOST")
-            .unwrap_or_else(|_| "metadata.google.internal".to_string());
-        let url = format!(
-            "http://{host}/computeMetadata/v1/instance/service-accounts/default/token"
-        );
+        let host =
+            std::env::var("GCE_METADATA_HOST").unwrap_or_else(|_| "metadata.google.internal".to_string());
+        let url = format!("http://{host}/computeMetadata/v1/instance/service-accounts/default/token");
         let t: MetadataToken = self
             .metadata_http
             .get(url)

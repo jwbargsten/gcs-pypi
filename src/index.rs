@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use base64::Engine;
 use serde::Deserialize;
 use tokio::sync::Mutex;
@@ -98,12 +98,15 @@ pub fn project_of(filename: &str) -> Option<String> {
 
 fn hash_for(obj: &GcsObject) -> Option<(&'static str, String)> {
     // Prefer a sha256 recorded at upload time (x-goog-meta-sha256); fall back to GCS's md5.
-    if let Some(sha) = obj.metadata.get("sha256") {
-        if sha.len() == 64 && sha.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Some(("sha256", sha.to_ascii_lowercase()));
-        }
+    if let Some(sha) = obj.metadata.get("sha256")
+        && sha.len() == 64
+        && sha.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        return Some(("sha256", sha.to_ascii_lowercase()));
     }
-    let raw = base64::engine::general_purpose::STANDARD.decode(obj.md5_hash.as_ref()?).ok()?;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(obj.md5_hash.as_ref()?)
+        .ok()?;
     Some(("md5", raw.iter().map(|b| format!("{b:02x}")).collect()))
 }
 
@@ -132,12 +135,18 @@ impl AppState {
             let status = resp.status();
             if !status.is_success() {
                 let body = resp.text().await.unwrap_or_default();
-                bail!("listing gs://{}/{} failed: {status}: {body}", self.bucket, self.prefix);
+                bail!(
+                    "listing gs://{}/{} failed: {status}: {body}",
+                    self.bucket,
+                    self.prefix
+                );
             }
             let list: ListResponse = resp.json().await?;
             for obj in list.items {
                 let filename = obj.name.rsplit('/').next().unwrap_or(&obj.name).to_string();
-                let Some(project) = project_of(&filename) else { continue };
+                let Some(project) = project_of(&filename) else {
+                    continue;
+                };
                 index.entry(project).or_default().push(Dist {
                     hash: hash_for(&obj),
                     requires_python: obj.metadata.get("requires_python").cloned(),
@@ -158,13 +167,16 @@ impl AppState {
 
     pub async fn index(&self) -> Result<Arc<Index>> {
         let mut listing = self.listing.lock().await;
-        if let Some(l) = listing.as_ref() {
-            if l.fetched_at.elapsed() < self.ttl {
-                return Ok(l.index.clone());
-            }
+        if let Some(l) = listing.as_ref()
+            && l.fetched_at.elapsed() < self.ttl
+        {
+            return Ok(l.index.clone());
         }
         let index = Arc::new(self.fetch_index().await?);
-        *listing = Some(Listing { index: index.clone(), fetched_at: Instant::now() });
+        *listing = Some(Listing {
+            index: index.clone(),
+            fetched_at: Instant::now(),
+        });
         Ok(index)
     }
 }
@@ -176,7 +188,10 @@ mod tests {
     #[test]
     fn names() {
         assert_eq!(normalize("Foo.Bar__baz"), "foo-bar-baz");
-        assert_eq!(project_of("My_Lib-1.2.0-py3-none-any.whl").as_deref(), Some("my-lib"));
+        assert_eq!(
+            project_of("My_Lib-1.2.0-py3-none-any.whl").as_deref(),
+            Some("my-lib")
+        );
         assert_eq!(project_of("my-lib-1.2.0.tar.gz").as_deref(), Some("my-lib"));
         assert_eq!(project_of("my_lib-1.2.0.zip").as_deref(), Some("my-lib"));
         assert_eq!(project_of("README.md"), None);
