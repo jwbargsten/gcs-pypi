@@ -183,18 +183,64 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
-    #[test]
-    fn names() {
-        assert_eq!(normalize("Foo.Bar__baz"), "foo-bar-baz");
-        assert_eq!(
-            project_of("My_Lib-1.2.0-py3-none-any.whl").as_deref(),
-            Some("my-lib")
-        );
-        assert_eq!(project_of("my-lib-1.2.0.tar.gz").as_deref(), Some("my-lib"));
-        assert_eq!(project_of("my_lib-1.2.0.zip").as_deref(), Some("my-lib"));
-        assert_eq!(project_of("README.md"), None);
-        assert_eq!(project_of("notes.tar.gz"), None);
+    #[rstest]
+    #[case("simple", "simple")]
+    #[case("Foo.Bar__baz", "foo-bar-baz")]
+    #[case("a--b", "a-b")]
+    #[case("A-_.B", "a-b")]
+    #[case("my_lib", "my-lib")]
+    fn normalize_names(#[case] name: &str, #[case] expected: &str) {
+        assert_eq!(normalize(name), expected);
+    }
+
+    #[rstest]
+    #[case("My_Lib-1.2.0-py3-none-any.whl", Some("my-lib"))]
+    #[case("pkg-1.0-1-py3-none-any.whl", Some("pkg"))]
+    #[case("pkg-1.0-cp312-cp312-manylinux_2_17_x86_64.whl", Some("pkg"))]
+    #[case("pkg-1.0.whl", None)]
+    #[case("-1.0-py3-none-any.whl", None)]
+    #[case("my-lib-1.2.0.tar.gz", Some("my-lib"))]
+    #[case("my_lib-1.2.0.zip", Some("my-lib"))]
+    #[case("notes.tar.gz", None)]
+    #[case("notes-final.tar.gz", None)]
+    #[case("-1.0.tar.gz", None)]
+    #[case("pkg-1.0.tar.bz2", None)]
+    #[case("README.md", None)]
+    fn project_of_filenames(#[case] filename: &str, #[case] expected: Option<&str>) {
+        assert_eq!(project_of(filename).as_deref(), expected);
+    }
+
+    const SHA: &str = "9F86D081884C7D659A2FEAA0C55AD015A3BF4F1B2B0B822CD15D6C15B0F00A08";
+    /// md5 of the empty string, as GCS reports it (base64).
+    const MD5_B64: &str = "1B2M2Y8AsgTpgAmY7PhCfg==";
+    const MD5_HEX: &str = "d41d8cd98f00b204e9800998ecf8427e";
+    const NON_HEX_SHA: &str = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
+
+    fn obj(md5: Option<&str>, sha256: Option<&str>) -> GcsObject {
+        GcsObject {
+            name: "pkg-1.0.tar.gz".into(),
+            md5_hash: md5.map(Into::into),
+            metadata: sha256.map(|s| ("sha256".into(), s.into())).into_iter().collect(),
+        }
+    }
+
+    #[rstest]
+    #[case::sha256_preferred_and_lowercased(Some(MD5_B64), Some(SHA), Some(("sha256", SHA.to_ascii_lowercase())))]
+    #[case::sha256_only(None, Some(SHA), Some(("sha256", SHA.to_ascii_lowercase())))]
+    #[case::bad_sha256_falls_back_to_md5(Some(MD5_B64), Some("abc"), Some(("md5", MD5_HEX.into())))]
+    #[case::non_hex_sha256_falls_back(Some(MD5_B64), Some(NON_HEX_SHA), Some(("md5", MD5_HEX.into())))]
+    #[case::md5_only(Some(MD5_B64), None, Some(("md5", MD5_HEX.into())))]
+    #[case::invalid_md5(Some("not base64!"), None, None)]
+    #[case::no_hash(None, None, None)]
+    fn hash_for_object(
+        #[case] md5: Option<&str>,
+        #[case] sha256: Option<&str>,
+        #[case] expected: Option<(&'static str, String)>,
+    ) {
+        assert_eq!(hash_for(&obj(md5, sha256)), expected);
     }
 }

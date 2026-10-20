@@ -6,11 +6,15 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, clap::ValueEnum)]
 pub enum AuthMode {
+    /// Metadata server, then gcloud
     Auto,
+    /// VM metadata server only
     Metadata,
+    /// `gcloud auth print-access-token` only
     Gcloud,
+    /// Anonymous requests (public buckets, emulators)
     None,
 }
 
@@ -56,11 +60,11 @@ impl Auth {
             return Ok(Some(t.value.clone()));
         }
         let (value, lifetime) = match self.mode {
-            AuthMode::Metadata => self.from_metadata().await?,
-            AuthMode::Gcloud => from_gcloud().await?,
-            AuthMode::Auto => match self.from_metadata().await {
+            AuthMode::Metadata => self.metadata_token().await?,
+            AuthMode::Gcloud => gcloud_token().await?,
+            AuthMode::Auto => match self.metadata_token().await {
                 Ok(t) => t,
-                Err(meta_err) => from_gcloud()
+                Err(meta_err) => gcloud_token()
                     .await
                     .map_err(|g| anyhow!("no credentials: metadata server: {meta_err:#}; gcloud: {g:#}"))?,
             },
@@ -75,7 +79,7 @@ impl Auth {
         Ok(Some(value))
     }
 
-    async fn from_metadata(&self) -> Result<(String, Duration)> {
+    async fn metadata_token(&self) -> Result<(String, Duration)> {
         let host =
             std::env::var("GCE_METADATA_HOST").unwrap_or_else(|_| "metadata.google.internal".to_string());
         let url = format!("http://{host}/computeMetadata/v1/instance/service-accounts/default/token");
@@ -92,7 +96,7 @@ impl Auth {
     }
 }
 
-async fn from_gcloud() -> Result<(String, Duration)> {
+async fn gcloud_token() -> Result<(String, Duration)> {
     let out = tokio::process::Command::new("gcloud")
         .args(["auth", "print-access-token"])
         .output()

@@ -148,3 +148,30 @@ async fn file(State(st): State<Arc<AppState>>, Path(object): Path<String>) -> Re
         .body(Body::from_stream(resp.bytes_stream()))
         .unwrap_or_else(|e| internal(e.into()))
 }
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::*;
+
+    #[rstest]
+    #[case("plain", "plain")]
+    #[case("a & b", "a &amp; b")]
+    #[case("<script>", "&lt;script&gt;")]
+    #[case(r#"x="1""#, "x=&quot;1&quot;")]
+    #[case("&lt;", "&amp;lt;")]
+    fn esc_html(#[case] input: &str, #[case] expected: &str) {
+        assert_eq!(esc(input), expected);
+    }
+
+    #[test]
+    fn page_escapes_title_but_not_links() {
+        let Html(html) = page("Links for <x>", "<a href=\"y\">y</a>\n");
+        assert_eq!(
+            html,
+            "<!DOCTYPE html>\n<html><head><meta name=\"pypi:repository-version\" content=\"1.0\">\
+             <title>Links for &lt;x&gt;</title></head><body>\n<a href=\"y\">y</a>\n</body></html>\n"
+        );
+    }
+}

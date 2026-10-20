@@ -1,0 +1,2 @@
+# Reformat with rustfmt (max_width 111, edition 2024) and apply clippy --fix
+824baf8ff2b9a5554601cee0d9b0876ae0a5d25c

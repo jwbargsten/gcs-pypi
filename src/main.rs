@@ -49,9 +49,9 @@ struct Args {
     #[arg(long, env = "GCS_PYPI_CACHE_TTL", default_value_t = 60)]
     cache_ttl: u64,
 
-    /// Auth source: auto (metadata server, then gcloud), metadata, gcloud, none
-    #[arg(long, env = "GCS_PYPI_AUTH", default_value = "auto")]
-    auth: String,
+    /// Auth source
+    #[arg(long, env = "GCS_PYPI_AUTH", value_enum, default_value = "auto")]
+    auth: AuthMode,
 
     /// GCS API endpoint (override for emulators)
     #[arg(
@@ -88,13 +88,6 @@ fn parse_bucket(spec: &str) -> Result<(String, String)> {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let (bucket, prefix) = parse_bucket(&args.bucket)?;
-    let mode = match args.auth.as_str() {
-        "auto" => AuthMode::Auto,
-        "metadata" => AuthMode::Metadata,
-        "gcloud" => AuthMode::Gcloud,
-        "none" => AuthMode::None,
-        other => bail!("unknown --auth {other:?} (auto|metadata|gcloud|none)"),
-    };
     let upstream = match args.upstream.as_str() {
         "" | "none" => None,
         u => Some(if u.ends_with('/') {
@@ -106,7 +99,7 @@ async fn main() -> Result<()> {
 
     let state = Arc::new(AppState {
         http: reqwest::Client::builder().build()?,
-        auth: Auth::new(mode)?,
+        auth: Auth::new(args.auth)?,
         endpoint: args.endpoint.trim_end_matches('/').to_string(),
         bucket,
         prefix,
@@ -154,11 +147,46 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use clap::CommandFactory;
+    use rstest::rstest;
+
     use super::*;
 
+    #[rstest]
+    #[case("gs://b", "b", "")]
+    #[case("gs://b/", "b", "")]
+    #[case("gs://b/a/c/", "b", "a/c/")]
+    #[case("gs://b/a/c", "b", "a/c/")]
+    #[case("b/pkgs", "b", "pkgs/")]
+    fn parse_bucket_ok(#[case] spec: &str, #[case] bucket: &str, #[case] prefix: &str) {
+        assert_eq!(parse_bucket(spec).unwrap(), (bucket.into(), prefix.into()));
+    }
+
+    #[rstest]
+    #[case("")]
+    #[case("gs://")]
+    #[case("gs:///")]
+    fn parse_bucket_err(#[case] spec: &str) {
+        assert!(parse_bucket(spec).is_err());
+    }
+
     #[test]
-    fn buckets() {
-        assert_eq!(parse_bucket("gs://b").unwrap(), ("b".into(), "".into()));
-        assert_eq!(parse_bucket("gs://b/a/c/").unwrap(), ("b".into(), "a/c/".into()));
+    fn args_definition_is_valid() {
+        Args::command().debug_assert();
+    }
+
+    #[rstest]
+    #[case(&[], AuthMode::Auto)]
+    #[case(&["--auth", "metadata"], AuthMode::Metadata)]
+    #[case(&["--auth", "gcloud"], AuthMode::Gcloud)]
+    #[case(&["--auth", "none"], AuthMode::None)]
+    fn auth_flag(#[case] extra: &[&str], #[case] expected: AuthMode) {
+        let argv = [&["gcs-pypi", "--bucket", "gs://b"], extra].concat();
+        assert_eq!(Args::try_parse_from(argv).unwrap().auth, expected);
+    }
+
+    #[test]
+    fn auth_flag_rejects_unknown() {
+        assert!(Args::try_parse_from(["gcs-pypi", "--bucket", "gs://b", "--auth", "bogus"]).is_err());
     }
 }

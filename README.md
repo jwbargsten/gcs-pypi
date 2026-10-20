@@ -68,8 +68,8 @@ The `sha256` metadata is optional; md5 works without it.
 1. Grant the VM's service account `roles/storage.objectViewer` on the bucket.
 2. Make sure the VM has the `cloud-platform` scope. Workbench instances have it by default.
 3. Ship the binary in your image, or `gcloud storage cp` it from a bucket in a startup
-   script. Build it once with `cargo build --release`; for a fully static binary, build
-   with `--target x86_64-unknown-linux-musl`.
+   script. Build it once with `make dist`, which produces a fully static binary (see
+   [Development](#development)).
 
 Example Dockerfile or startup step:
 
@@ -81,3 +81,29 @@ RUN gcs-pypi --bucket gs://my-pypi/packages -- pip install --no-cache-dir -r req
 
 `--auth none --endpoint http://localhost:4443` works against
 [fake-gcs-server](https://github.com/fsouza/fake-gcs-server).
+
+## Development
+
+`make` lists the targets:
+
+| Target | |
+|---|---|
+| `make build` | debug build |
+| `make test` | run the unit tests |
+| `make fmt` | apply `clippy --fix`, then `cargo fmt` |
+| `make lint` | `cargo fmt --check` and `cargo clippy -D warnings`; fails on any warning |
+| `make dist` | `clean`, `lint`, `test`, then an optimized build copied to `dist/gcs-pypi-<commit>-<target>` |
+| `make clean` | `cargo clean` and remove `dist/` |
+
+`make dist` builds for `x86_64-unknown-linux-musl` by default. That needs a Linux host with
+the target and the musl toolchain:
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+sudo apt-get install musl-tools
+```
+
+To build for another target, e.g. the host on macOS: `make dist DIST_TARGET=aarch64-apple-darwin`.
+
+The toolchain (stable, with rustfmt and clippy) is pinned in `rust-toolchain.toml`. To skip the
+reformat commit in `git blame`, run `git config blame.ignoreRevsFile .git-blame-ignore-revs`.
