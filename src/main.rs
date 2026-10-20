@@ -8,10 +8,11 @@
 //!   gcs-pypi --bucket gs://my-pypi/packages -- uv sync
 
 mod auth;
+mod daemon;
 mod index;
 mod server;
 
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -29,7 +30,8 @@ use crate::{
     about = "Serve a GCS bucket as a local Python package index for pip/uv",
     after_help = "With a command after `--`, the server starts on a free port, PIP_INDEX_URL and \
                   UV_DEFAULT_INDEX are set for the command, and the server stops when it exits.\n\
-                  Without a command, the server runs until interrupted."
+                  Without a command, the server runs until interrupted, or in the background with \
+                  --daemon."
 )]
 struct Args {
     /// Bucket and optional prefix, e.g. gs://my-pypi or gs://my-pypi/packages
@@ -65,6 +67,15 @@ struct Args {
     #[arg(long, short)]
     verbose: bool,
 
+    /// Serve in the background: return once the server is ready, printing its env lines and
+    /// GCS_PYPI_PID (stop it with `kill $GCS_PYPI_PID`)
+    #[arg(long, conflicts_with = "command")]
+    daemon: bool,
+
+    /// Where the background server logs (with --daemon) [default: <temp dir>/gcs-pypi.log]
+    #[arg(long, env = "GCS_PYPI_LOG_FILE")]
+    log_file: Option<PathBuf>,
+
     /// Command to run with the index configured
     #[arg(last = true)]
     command: Vec<String>,
@@ -88,6 +99,12 @@ fn parse_bucket(spec: &str) -> Result<(String, String)> {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let (bucket, prefix) = parse_bucket(&args.bucket)?;
+    if args.daemon && !daemon::is_child() {
+        let log_file = args
+            .log_file
+            .unwrap_or_else(|| std::env::temp_dir().join("gcs-pypi.log"));
+        return daemon::spawn(&log_file);
+    }
     let upstream = match args.upstream.as_str() {
         "" | "none" => None,
         u => Some(if u.ends_with('/') {
@@ -183,6 +200,11 @@ mod tests {
     fn auth_flag(#[case] extra: &[&str], #[case] expected: AuthMode) {
         let argv = [&["gcs-pypi", "--bucket", "gs://b"], extra].concat();
         assert_eq!(Args::try_parse_from(argv).unwrap().auth, expected);
+    }
+
+    #[test]
+    fn daemon_conflicts_with_command() {
+        assert!(Args::try_parse_from(["gcs-pypi", "--bucket", "gs://b", "--daemon", "--", "pip"]).is_err());
     }
 
     #[test]

@@ -39,6 +39,8 @@ pip / uv ──HTTP──▶ 127.0.0.1:<random>/simple/  (gcs-pypi)
 |---|---|
 | Wrap a command (recommended) | `gcs-pypi --bucket gs://b/prefix -- <cmd...>` sets `PIP_INDEX_URL` and `UV_DEFAULT_INDEX` for `<cmd>`, then exits with its exit code |
 | Long-running | `gcs-pypi --bucket gs://b/prefix --addr 127.0.0.1:8765` prints the env lines and serves until Ctrl-C |
+| Background | `eval "$(gcs-pypi --bucket gs://b/prefix --daemon)"` returns once the server is ready and sets the env vars plus `GCS_PYPI_PID` in your shell; stop it with `kill $GCS_PYPI_PID` |
+| systemd service | see [Running as a systemd service](#running-as-a-systemd-service) |
 
 | Flag / env | Default | |
 |---|---|---|
@@ -49,6 +51,8 @@ pip / uv ──HTTP──▶ 127.0.0.1:<random>/simple/  (gcs-pypi)
 | `--addr` / `GCS_PYPI_ADDR` | `127.0.0.1:0` | port 0 = random free port |
 | `--endpoint` / `GCS_PYPI_ENDPOINT` | `https://storage.googleapis.com` | for emulators |
 | `-v` | off | log fetches and upstream redirects |
+| `--daemon` | off | serve in the background (not with a command) |
+| `--log-file` / `GCS_PYPI_LOG_FILE` | `<temp dir>/gcs-pypi.log` | log of the background server; if it fails to start, the error is also printed |
 
 ## Publishing
 
@@ -75,6 +79,33 @@ Example Dockerfile or startup step:
 
 ```dockerfile
 RUN gcs-pypi --bucket gs://my-pypi/packages -- pip install --no-cache-dir -r requirements.txt
+```
+
+## Running as a systemd service
+
+`systemd/gcs-pypi.service` runs the server in the foreground on the fixed address
+`127.0.0.1:8765`, with metadata-server auth and a dynamic, unprivileged user:
+
+```bash
+sudo install -m 0755 gcs-pypi /usr/local/bin/gcs-pypi
+sudo install -m 0644 systemd/gcs-pypi.service /etc/systemd/system/
+echo 'GCS_PYPI_BUCKET=gs://my-pypi/packages' | sudo tee /etc/default/gcs-pypi
+sudo systemctl daemon-reload
+sudo systemctl enable --now gcs-pypi
+journalctl -u gcs-pypi -f
+```
+
+Then point pip and uv at it, e.g. in `/etc/pip.conf` and `/etc/uv/uv.toml`:
+
+```ini
+[global]
+index-url = http://127.0.0.1:8765/simple/
+```
+
+```toml
+[[index]]
+url = "http://127.0.0.1:8765/simple/"
+default = true
 ```
 
 ## Testing locally without GCP

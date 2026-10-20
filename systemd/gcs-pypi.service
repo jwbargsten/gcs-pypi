@@ -1,0 +1,53 @@
+[Unit]
+Description=gcs-pypi: GCS bucket as a local Python package index
+Documentation=https://github.com/jwbargsten/gcs-pypi
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+DynamicUser=yes
+UMask=0077
+Type=exec
+SyslogIdentifier=gcs-pypi
+
+ExecStart=/usr/local/bin/gcs-pypi
+
+# Fixed port, so pip.conf / uv.toml can point at http://127.0.0.1:8765/simple/
+Environment=GCS_PYPI_ADDR=127.0.0.1:8765
+# gcloud is not available to the service user; use the VM's service account.
+Environment=GCS_PYPI_AUTH=metadata
+# Sets GCS_PYPI_BUCKET, and optionally GCS_PYPI_UPSTREAM, GCS_PYPI_CACHE_TTL, ...
+EnvironmentFile=/etc/default/gcs-pypi
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+CapabilityBoundingSet=
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallArchitectures=native
+MemoryMax=256M
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+ProtectProc=invisible
+
+# The first bucket listing runs at startup, so a missing permission shows up as a failed start.
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
