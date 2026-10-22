@@ -1,9 +1,12 @@
-.PHONY: build test fmt lint dist clean help
+.PHONY: build test fmt lint dist wheel clean help
 
 .DEFAULT_GOAL := help
 
 COMMIT_ID=$(shell git rev-parse --short=8 HEAD 2>/dev/null || echo dev)
 DIST_TARGET ?= x86_64-unknown-linux-musl
+WHEEL_TARGET ?= x86_64-unknown-linux-gnu
+MATURIN_VERSION = 1.15.0
+ZIGLANG_VERSION = 0.16.0
 
 build: ## debug build
 	cargo build
@@ -23,6 +26,10 @@ dist: clean lint test ## lint, test and build optimized binary into ./dist (over
 	cargo build --release --target $(DIST_TARGET)
 	mkdir -p dist
 	cp target/$(DIST_TARGET)/release/gcs-pypi dist/gcs-pypi-$(COMMIT_ID)-$(DIST_TARGET)
+
+wheel: clean lint test ## lint, test and build the manylinux wheel into ./dist (override target with WHEEL_TARGET)
+	uvx --with ziglang==$(ZIGLANG_VERSION) maturin@$(MATURIN_VERSION) build --release --zig \
+		--target $(WHEEL_TARGET) --compatibility manylinux2014 --out dist
 
 clean: ## clean and remove dist dir
 	cargo clean

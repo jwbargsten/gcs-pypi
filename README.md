@@ -74,12 +74,30 @@ The `sha256` metadata is optional; md5 works without it.
 2. Make sure the VM has the `cloud-platform` scope. Workbench instances have it by default.
 3. Ship the binary in your image, or `gcloud storage cp` it from a bucket in a startup
    script. Build it once with `make dist`, which produces a fully static binary (see
-   [Development](#development)).
+   [Development](#development)). Or install the wheel, see below.
 
 Example Dockerfile or startup step:
 
 ```dockerfile
 RUN gcs-pypi --bucket gs://my-pypi/packages -- pip install --no-cache-dir -r requirements.txt
+```
+
+## Install from a wheel
+
+`make wheel` builds `gcs_pypi_proxy-<version>-py3-none-manylinux_2_17_x86_64.whl`. It contains
+only the binary, so it works with any Python version on any x86_64 Linux with glibc 2.17 or
+newer. The distribution is called `gcs-pypi-proxy`, because `gcs-pypi` on PyPI is an unrelated
+project; the command is still `gcs-pypi`.
+
+In a running container:
+
+```bash
+gcloud storage cp gs://my-pypi/tools/gcs_pypi_proxy-0.2.0-py3-none-manylinux_2_17_x86_64.whl .
+pip install ./gcs_pypi_proxy-0.2.0-py3-none-manylinux_2_17_x86_64.whl
+# or: uv tool install ./gcs_pypi_proxy-0.2.0-py3-none-manylinux_2_17_x86_64.whl
+
+eval "$(gcs-pypi --bucket gs://my-pypi/packages --daemon)"
+pip install my-private-lib
 ```
 
 ## Running as a systemd service
@@ -131,6 +149,7 @@ default = true
 | `make fmt` | apply `clippy --fix`, then `cargo fmt` |
 | `make lint` | `cargo fmt --check` and `cargo clippy -D warnings`; fails on any warning |
 | `make dist` | `clean`, `lint`, `test`, then an optimized build copied to `dist/gcs-pypi-<commit>-<target>` |
+| `make wheel` | `clean`, `lint`, `test`, then the manylinux wheel in `dist/` |
 | `make clean` | `cargo clean` and remove `dist/` |
 
 `make dist` builds for `x86_64-unknown-linux-musl` by default. That needs a Linux host with
@@ -142,6 +161,16 @@ sudo apt-get install musl-tools
 ```
 
 To build for another target, e.g. the host on macOS: `make dist DIST_TARGET=aarch64-apple-darwin`.
+
+`make wheel` cross-compiles with zig via maturin, on Linux and macOS alike. It needs `uv`
+(maturin and zig are fetched by `uvx`, at the versions pinned in the Makefile) and the Rust target:
+
+```bash
+rustup target add x86_64-unknown-linux-gnu
+```
+
+The version comes from `Cargo.toml`; bump it there before building a wheel to hand out.
+`WHEEL_TARGET=aarch64-unknown-linux-gnu` builds an arm64 wheel (after `rustup target add` for it).
 
 The toolchain (stable, with rustfmt and clippy) is pinned in `rust-toolchain.toml`. To skip the
 reformat commit in `git blame`, run `git config blame.ignoreRevsFile .git-blame-ignore-revs`.
