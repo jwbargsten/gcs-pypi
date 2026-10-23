@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# wbinit: run when the workbench starts.
+#
+# 1. Starts gcs-pypi in the background on 127.0.0.1:8765. It runs in its own session, so it
+#    keeps serving after wbinit exits, until the workbench shuts down.
+# 2. Installs the project's dependencies through it, once per boot. A successful install creates
+#    the marker file in /tmp; while it exists, running wbinit again skips the install. /tmp is
+#    cleared on restart, so every workbench start installs again (pip/uv find them installed).
+#
+# Usage: wbinit [install command...]
+#   Without a command: `uv sync` if the project has uv.lock, otherwise
+#   `pip install -r requirements.txt`.
+#
+# Environment:
+#   GCS_PYPI_BUCKET     gs://bucket[/prefix], required (plus any other GCS_PYPI_* settings)
+#   WBINIT_PROJECT_DIR  project to install [default: current directory]
+#   WBINIT_MARKER       [default: /tmp/wbinit-initialized]; delete it to install again
+set -euo pipefail
+
+# Fixed and loopback-only. Passed as --addr, which takes precedence over GCS_PYPI_ADDR.
+host=127.0.0.1
+port=8765
+state_dir="$HOME/.cache/wb"
+marker="${WBINIT_MARKER:-/tmp/wbinit-initialized}"
+project_dir="${WBINIT_PROJECT_DIR:-$PWD}"
+
+log() { echo "wbinit: $*" >&2; }
+
+mkdir -p "$state_dir"
+
+# 1. gcs-pypi. If the port is taken, it is still running from an earlier wbinit since boot.
+if (exec 3<>"/dev/tcp/$host/$port") 2>/dev/null; then
+    log "gcs-pypi already listening on $host:$port"
+    snippet=$(gcs-pypi env --addr "$host:$port")
+else
+    : "${GCS_PYPI_BUCKET:?set GCS_PYPI_BUCKET=gs://bucket[/prefix]}"
+    # Not `eval "$(...)"`: that would hide a failed start from `set -e`.
+    snippet=$(gcs-pypi --addr "$host:$port" --daemon --log-file "$state_dir/gcs-pypi.log")
+fi
+eval "$snippet"
+
+# 2. Dependencies, once.
+if [[ -e "$marker" ]]; then
+    log "already initialized ($marker exists), skipping install"
+    exit 0
+fi
+
+cd "$project_dir"
+if (($# > 0)); then
+    cmd=("$@")
+elif [[ -f uv.lock ]]; then
+    cmd=(uv sync)
+elif [[ -f requirements.txt ]]; then
+    cmd=(pip install -r requirements.txt)
+else
+    log "no uv.lock or requirements.txt in $project_dir; pass the install command as arguments"
+    exit 1
+fi
+
+log "installing in $project_dir: ${cmd[*]}"
+"${cmd[@]}"
+
+mkdir -p "$(dirname "$marker")"
+date -u +%Y-%m-%dT%H:%M:%SZ >"$marker"
+log "initialized, created $marker"
